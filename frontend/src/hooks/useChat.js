@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { API_BASE } from '../config'
 
 const INITIAL_MESSAGE = {
   role: 'assistant',
@@ -27,7 +28,7 @@ export function useChat() {
     ]
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: apiMessages }),

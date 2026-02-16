@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { API_BASE } from '../config'
 import DiffView from '../components/DiffView'
 
 export default function AdminPage({ onBack }) {
@@ -18,7 +19,7 @@ export default function AdminPage({ onBack }) {
 
   // 初回読み込み
   useEffect(() => {
-    fetch('/api/system-prompt')
+    fetch(`${API_BASE}/api/system-prompt`)
       .then((res) => res.json())
       .then((data) => {
         setRawContent(data.content)
@@ -36,7 +37,7 @@ export default function AdminPage({ onBack }) {
     setMessage(null)
 
     try {
-      const res = await fetch('/api/system-prompt/edit', {
+      const res = await fetch(`${API_BASE}/api/system-prompt/edit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ instruction: instruction.trim() }),
@@ -60,7 +61,7 @@ export default function AdminPage({ onBack }) {
     if (!editResult) return
     setSaving(true)
     try {
-      const res = await fetch('/api/system-prompt', {
+      const res = await fetch(`${API_BASE}/api/system-prompt`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: editResult.modified }),
@@ -92,7 +93,7 @@ export default function AdminPage({ onBack }) {
     setSaving(true)
     setMessage(null)
     try {
-      const res = await fetch('/api/system-prompt', {
+      const res = await fetch(`${API_BASE}/api/system-prompt`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ content: rawContent }),
