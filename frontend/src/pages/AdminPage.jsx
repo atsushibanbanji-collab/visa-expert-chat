@@ -14,24 +14,54 @@ export default function AdminPage({ onBack }) {
   const [loadingRaw, setLoadingRaw] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState(null)
+  const [promptHash, setPromptHash] = useState(null)
 
   const instructionRef = useRef(null)
+  const generateAbortRef = useRef(null)
+  const saveAbortRef = useRef(null)
+
+  // サーバーからプロンプトを再読み込み
+  const reloadPrompt = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/system-prompt`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      setRawContent(data.content)
+      setSavedContent(data.content)
+      setPromptHash(data.hash)
+      setEditResult(null)
+    } catch (err) {
+      console.error('再読み込みに失敗:', err)
+    }
+  }
 
   // 初回読み込み
   useEffect(() => {
     fetch(`${API_BASE}/api/system-prompt`)
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
       .then((data) => {
         setRawContent(data.content)
         setSavedContent(data.content)
+        setPromptHash(data.hash)
       })
-      .catch(() => setMessage({ type: 'error', text: '読み込みに失敗しました' }))
+      .catch((err) => {
+        console.error('システムプロンプトの読み込みに失敗:', err)
+        setMessage({ type: 'error', text: '読み込みに失敗しました' })
+      })
       .finally(() => setLoadingRaw(false))
   }, [])
 
   // Claudeに編集を依頼
   const handleGenerate = async () => {
-    if (!instruction.trim() || generating) return
+    if (!instruction.trim()) return
+    // 前のリクエストをキャンセル
+    generateAbortRef.current?.abort()
+    const controller = new AbortController()
+    generateAbortRef.current = controller
+
     setGenerating(true)
     setEditResult(null)
     setMessage(null)
@@ -41,73 +71,111 @@ export default function AdminPage({ onBack }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ instruction: instruction.trim() }),
+        signal: controller.signal,
       })
       if (!res.ok) {
-        const data = await res.json()
-        setMessage({ type: 'error', text: data.detail || '生成に失敗しました' })
+        let detail = '生成に失敗しました'
+        try {
+          const data = await res.json()
+          detail = data.detail || detail
+        } catch { /* JSONパース失敗は無視 */ }
+        setMessage({ type: 'error', text: detail })
         return
       }
       const data = await res.json()
       setEditResult(data)
-    } catch {
+    } catch (err) {
+      if (err.name === 'AbortError') return
+      console.error('編集生成エラー:', err)
       setMessage({ type: 'error', text: '通信エラーが発生しました' })
     } finally {
-      setGenerating(false)
+      if (!controller.signal.aborted) setGenerating(false)
     }
   }
 
   // 変更を適用（保存）
   const handleApply = async () => {
-    if (!editResult) return
+    if (!editResult || saving) return
+    // 前の保存リクエストをキャンセル
+    saveAbortRef.current?.abort()
+    const controller = new AbortController()
+    saveAbortRef.current = controller
+
     setSaving(true)
     try {
       const res = await fetch(`${API_BASE}/api/system-prompt`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: editResult.modified }),
+        body: JSON.stringify({
+          content: editResult.modified,
+          expected_hash: editResult.original_hash,
+        }),
+        signal: controller.signal,
       })
       if (res.ok) {
+        const result = await res.json()
         setSavedContent(editResult.modified)
         setRawContent(editResult.modified)
+        setPromptHash(result.hash)
         setEditResult(null)
         setInstruction('')
         setMessage({ type: 'success', text: '適用しました' })
+      } else if (res.status === 409) {
+        setMessage({ type: 'error', text: '別の操作でプロンプトが変更されています。最新の内容を読み込み直します。' })
+        await reloadPrompt()
       } else {
         setMessage({ type: 'error', text: '保存に失敗しました' })
       }
-    } catch {
+    } catch (err) {
+      if (err.name === 'AbortError') return
+      console.error('適用エラー:', err)
       setMessage({ type: 'error', text: '通信エラーが発生しました' })
     } finally {
-      setSaving(false)
+      if (!controller.signal.aborted) setSaving(false)
     }
   }
 
   // 変更を破棄
   const handleDiscard = () => {
+    generateAbortRef.current?.abort()
     setEditResult(null)
     setMessage(null)
   }
 
   // Raw editor: 保存
   const handleRawSave = async () => {
+    if (saving) return
+    // 前の保存リクエストをキャンセル
+    saveAbortRef.current?.abort()
+    const controller = new AbortController()
+    saveAbortRef.current = controller
+
     setSaving(true)
     setMessage(null)
     try {
       const res = await fetch(`${API_BASE}/api/system-prompt`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: rawContent }),
+        body: JSON.stringify({ content: rawContent, expected_hash: promptHash }),
+        signal: controller.signal,
       })
       if (res.ok) {
+        const result = await res.json()
         setSavedContent(rawContent)
+        setPromptHash(result.hash)
         setMessage({ type: 'success', text: '保存しました' })
+      } else if (res.status === 409) {
+        setMessage({ type: 'error', text: '別の操作でプロンプトが変更されています。最新の内容を読み込み直します。' })
+        await reloadPrompt()
       } else {
         setMessage({ type: 'error', text: '保存に失敗しました' })
       }
-    } catch {
+    } catch (err) {
+      if (err.name === 'AbortError') return
+      console.error('保存エラー:', err)
       setMessage({ type: 'error', text: '通信エラーが発生しました' })
     } finally {
-      setSaving(false)
+      if (!controller.signal.aborted) setSaving(false)
     }
   }
 
